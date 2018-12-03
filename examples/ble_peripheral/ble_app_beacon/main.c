@@ -51,6 +51,7 @@
 #include <stdint.h>
 #include "nordic_common.h"
 #include "bsp.h"
+#include "ble_radio_notification.h"
 #include "nrf_soc.h"
 #include "nrf_sdh.h"
 #include "nrf_sdh_ble.h"
@@ -67,7 +68,7 @@
 
 #define NON_CONNECTABLE_ADV_INTERVAL    MSEC_TO_UNITS(100, UNIT_0_625_MS)  /**< The advertising interval for non-connectable advertisement (100 ms). This value can vary between 100ms to 10.24s). */
 
-#define APP_BEACON_INFO_LENGTH          0x17                               /**< Total length of information advertised by the Beacon. */
+#define APP_BEACON_INFO_LENGTH          0x1                               /**< Total length of information advertised by the Beacon. */
 #define APP_ADV_DATA_LENGTH             0x15                               /**< Length of manufacturer specific data in the advertisement. */
 #define APP_DEVICE_TYPE                 0x02                               /**< 0x02 refers to Beacon. */
 #define APP_MEASURED_RSSI               0xC3                               /**< The Beacon's measured RSSI at 1 meter distance in dBm. */
@@ -109,15 +110,7 @@ static ble_gap_adv_data_t m_adv_data =
 
 static uint8_t m_beacon_info[APP_BEACON_INFO_LENGTH] =                    /**< Information advertised by the Beacon. */
 {
-    APP_DEVICE_TYPE,     // Manufacturer specific information. Specifies the device type in this
-                         // implementation.
-    APP_ADV_DATA_LENGTH, // Manufacturer specific information. Specifies the length of the
-                         // manufacturer specific data in this implementation.
-    APP_BEACON_UUID,     // 128 bit UUID value.
-    APP_MAJOR_VALUE,     // Major arbitrary value that can be used to distinguish between Beacons.
-    APP_MINOR_VALUE,     // Minor arbitrary value that can be used to distinguish between Beacons.
-    APP_MEASURED_RSSI    // Manufacturer specific information. The Beacon's measured TX power in
-                         // this implementation.
+  0x01
 };
 
 
@@ -136,7 +129,11 @@ void assert_nrf_callback(uint16_t line_num, const uint8_t * p_file_name)
 {
     app_error_handler(DEAD_BEEF, line_num, p_file_name);
 }
-
+static ble_uuid_t m_adv_uuid[] = {
+    {0x180A, BLE_UUID_TYPE_BLE}
+};
+static ble_advdata_manuf_data_t manuf_specific_data;
+static ble_advdata_t advdata;
 /**@brief Function for initializing the Advertising functionality.
  *
  * @details Encodes the required advertising data and passes it to the stack.
@@ -145,10 +142,8 @@ void assert_nrf_callback(uint16_t line_num, const uint8_t * p_file_name)
 static void advertising_init(void)
 {
     uint32_t      err_code;
-    ble_advdata_t advdata;
+    
     uint8_t       flags = BLE_GAP_ADV_FLAG_BR_EDR_NOT_SUPPORTED;
-
-    ble_advdata_manuf_data_t manuf_specific_data;
 
     manuf_specific_data.company_identifier = APP_COMPANY_IDENTIFIER;
 
@@ -182,6 +177,8 @@ static void advertising_init(void)
 
     advdata.name_type             = BLE_ADVDATA_NO_NAME;
     advdata.flags                 = flags;
+    //advdata.uuids_complete.uuid_cnt = sizeof(m_adv_uuid) / sizeof(m_adv_uuid[0]);
+    //advdata.uuids_complete.p_uuids = m_adv_uuid;
     advdata.p_manuf_specific_data = &manuf_specific_data;
 
     // Initialize advertising parameters (used when starting advertising).
@@ -285,6 +282,25 @@ static void idle_state_handle(void)
     }
 }
 
+void ble_on_radio_active_evt(bool radio_active)
+{
+  if(radio_active) {
+    if (m_beacon_info[0] < 0xff) {
+      m_beacon_info[0] += 1;
+    } else {
+      m_beacon_info[0] = 1;
+    }
+    NRF_LOG_INFO("data = %d", m_beacon_info[0]);
+    ble_advdata_encode(&advdata, m_adv_data.adv_data.p_data, &m_adv_data.adv_data.len);
+  } else {
+
+  }
+}
+
+static void ble_radio_callback_init()
+{
+  ble_radio_notification_init(APP_IRQ_PRIORITY_LOW, NRF_RADIO_NOTIFICATION_DISTANCE_5500US, ble_on_radio_active_evt);
+}
 
 /**
  * @brief Function for application main entry.
@@ -298,11 +314,12 @@ int main(void)
     power_management_init();
     ble_stack_init();
     advertising_init();
+    ble_radio_callback_init();
 
     // Start execution.
     NRF_LOG_INFO("Beacon example started.");
     advertising_start();
-
+    
     // Enter main loop.
     for (;; )
     {
